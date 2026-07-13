@@ -6,6 +6,9 @@ import { BACKEND_URL, USER_ID, TOKEN } from '@/lib/backend'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// agent turns stream for a while; raise the function timeout. Vercel caps this to the
+// plan max (Hobby ~60s, Pro up to 300s). Long research turns need Pro or direct-connect.
+export const maxDuration = 300
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}))
