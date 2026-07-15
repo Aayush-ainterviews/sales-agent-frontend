@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Send, Sparkles, Wrench } from 'lucide-react'
 import { streamAgent } from '@/lib/api'
 
@@ -19,6 +20,7 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const [busy, setBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
+  const router = useRouter()
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -28,6 +30,9 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     if (initialQuery && !started.current) {
       started.current = true
       void send(initialQuery)
+      // drop ?q= from the URL so a page refresh doesn't re-fire the same query
+      // (which would hit the backend's one-turn-per-user 409).
+      router.replace('/search')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery])
