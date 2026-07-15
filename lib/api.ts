@@ -14,11 +14,22 @@ function authHeaders(token: string): HeadersInit {
 }
 
 export interface AgentHandlers {
-  onDelta?: (text: string) => void       // streamed assistant text
-  onTool?: (name: string) => void         // a tool started running
+  onDelta?: (text: string) => void                      // streamed assistant text
+  onTool?: (name: string, detail?: string) => void       // a tool started (detail = file path / command)
   onToolEnd?: (name: string, isError: boolean) => void
   onError?: (detail: string) => void
   onDone?: () => void
+}
+
+// Pull the human-relevant argument out of a tool_execution_start event: the file path
+// for read/write/edit, the command for bash. Field name varies, so probe the usual keys.
+function toolDetail(ev: any): string | undefined {
+  const a = ev.arguments ?? ev.toolInput ?? ev.input ?? ev.args ?? ev.parameters
+  if (a && typeof a === 'object') {
+    const v = a.file_path ?? a.path ?? a.filename ?? a.command ?? a.pattern
+    if (typeof v === 'string') return v
+  }
+  return undefined
 }
 
 // Stream one turn. Parses the SSE frames the backend emits (pi events).
@@ -56,55 +67,93 @@ export async function streamAgent(
   const dec = new TextDecoder()
   let buf = ''
   let sawText = false
+  let finished = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += dec.decode(value, { stream: true })
+  try {
+    while (!finished) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
 
-    let sep: number
-    while ((sep = buf.indexOf('\n\n')) >= 0) {
-      const frame = buf.slice(0, sep)
-      buf = buf.slice(sep + 2)
-      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'))
-      if (!dataLine) continue
+      let sep: number
+      while ((sep = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, sep)
+        buf = buf.slice(sep + 2)
+        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'))
+        if (!dataLine) continue
 
-      let ev: any
-      try {
-        ev = JSON.parse(dataLine.slice(dataLine.indexOf(':') + 1).trim())
-      } catch {
-        continue
-      }
+        let ev: any
+        try {
+          ev = JSON.parse(dataLine.slice(dataLine.indexOf(':') + 1).trim())
+        } catch {
+          continue
+        }
 
-      switch (ev.type) {
-        case 'message_update':
-          if (ev.assistantMessageEvent?.type === 'text_delta') {
-            sawText = true
-            h.onDelta?.(ev.assistantMessageEvent.delta ?? '')
-          }
-          break
-        case 'tool_execution_start':
-          h.onTool?.(ev.toolName ?? 'tool')
-          break
-        case 'tool_execution_end':
-          h.onToolEnd?.(ev.toolName ?? 'tool', !!ev.isError)
-          break
-        case 'turn_error':
-          h.onError?.(ev.detail ?? ev.reason ?? 'error')
-          break
-        case 'agent_end':
-          // fallback: if no streamed deltas arrived, render the final assistant text
-          if (!sawText) {
-            const text = finalText(ev)
-            if (text) h.onDelta?.(text)
-          }
-          h.onDone?.()
-          return
-        // turn_start, heartbeat, message_start/end, etc. -> ignore
+        switch (ev.type) {
+          case 'message_update':
+            if (ev.assistantMessageEvent?.type === 'text_delta') {
+              sawText = true
+              h.onDelta?.(ev.assistantMessageEvent.delta ?? '')
+            }
+            break
+          case 'tool_execution_start':
+            h.onTool?.(ev.toolName ?? 'tool', toolDetail(ev))
+            break
+          case 'tool_execution_end':
+            h.onToolEnd?.(ev.toolName ?? 'tool', !!ev.isError)
+            break
+          case 'turn_error':
+            h.onError?.(ev.detail ?? ev.reason ?? 'error')
+            break
+          case 'agent_end':
+            // fallback: if no streamed deltas arrived, render the final assistant text
+            if (!sawText) {
+              const text = finalText(ev)
+              if (text) h.onDelta?.(text)
+            }
+            finished = true
+            break
+          // turn_start, heartbeat, message_start/end, etc. -> ignore
+        }
+        if (finished) break
       }
     }
+  } catch (e) {
+    // an intentional abort (Stop button) throws AbortError — not an error to surface
+    if ((e as any)?.name !== 'AbortError') h.onError?.(String(e))
+  } finally {
+    h.onDone?.()
   }
-  h.onDone?.()
+}
+
+// --- mid-turn controls (Q7) ---
+
+// Stop the running turn. Best-effort; the client also aborts its own fetch.
+export async function abortTurn(auth: Auth): Promise<boolean> {
+  try {
+    const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/abort`, {
+      method: 'POST',
+      headers: authHeaders(auth.token),
+    })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
+// Inject a message into the CURRENTLY running turn. Returns false (409) if no turn
+// is running — caller then falls back to sending it as a fresh turn.
+export async function steerTurn(auth: Auth, message: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/steer`, {
+      method: 'POST',
+      headers: authHeaders(auth.token),
+      body: JSON.stringify({ message }),
+    })
+    return r.ok
+  } catch {
+    return false
+  }
 }
 
 // Pull the last assistant message's text out of an agent_end event (fallback path).
@@ -155,6 +204,18 @@ export async function rejectBatch(auth: Auth, id: string) {
     headers: authHeaders(auth.token),
   })
   return r.json()
+}
+
+// --- output file download (from the user's sandbox) ---
+
+// Fetch one output file (authenticated) as a Blob so the browser can save it.
+// Returns null if the file is missing/unreadable.
+export async function fetchFileBlob(auth: Auth, path: string): Promise<Blob | null> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/file?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders(auth.token),
+  })
+  if (!r.ok) return null
+  return r.blob()
 }
 
 // --- admin (role=admin): monitor all users + unstick ---

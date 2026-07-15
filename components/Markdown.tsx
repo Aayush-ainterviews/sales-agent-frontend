@@ -2,10 +2,17 @@
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Download } from 'lucide-react'
+
+// Inline code that looks like a file (has a dir separator + an extension, no spaces,
+// and isn't a bare directory) becomes a download link. Directories (trailing /) and
+// plain words are left as normal code.
+const isDownloadablePath = (s: string) => /^[^\s`]+\/[^\s`]*\.[A-Za-z0-9]{1,6}$/.test(s)
 
 // Renders assistant markdown (GFM: tables, lists, links, code) with the app's
 // design tokens, so streamed agent output reads like prose instead of raw ** and ###.
-export function Markdown({ children }: { children: string }) {
+// `onDownload` (if given) turns file-path inline code into a download action.
+export function Markdown({ children, onDownload }: { children: string; onDownload?: (path: string) => void }) {
   return (
     <div className="text-sm leading-relaxed">
       <ReactMarkdown
@@ -35,6 +42,19 @@ export function Markdown({ children }: { children: string }) {
           code: ({ node, className, children, ...rest }) => {
             const text = String(children)
             const isInline = !className && !text.includes('\n')
+            if (isInline && onDownload && isDownloadablePath(text)) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => onDownload(text)}
+                  title={`Download ${text}`}
+                  className="inline-flex items-center gap-1 px-1 py-0.5 rounded bg-background/70 border border-border text-[0.85em] font-mono text-blue-600 dark:text-blue-400 hover:opacity-70 break-words align-baseline"
+                >
+                  {text}
+                  <Download className="w-3 h-3 shrink-0" />
+                </button>
+              )
+            }
             return isInline ? (
               <code className="px-1 py-0.5 rounded bg-background/70 border border-border text-[0.85em] font-mono break-words" {...rest}>
                 {children}

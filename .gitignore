@@ -15,3 +15,5 @@ node_modules
 .DS_Store
 # clerk configuration (can include secrets)
 /.clerk/
+.env.local
+.env.local.example
