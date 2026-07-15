@@ -3,14 +3,17 @@
 import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { UserButton, useUser } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import ChatPanel from '@/components/ChatPanel'
-import { Search, ArrowLeft, Inbox } from 'lucide-react'
+import { Search, ArrowLeft, Inbox, Shield } from 'lucide-react'
 
 function SearchContent() {
   const searchParams = useSearchParams()
   const query = searchParams.get('q') || ''
+  const { user } = useUser()
+  const isAdmin = user?.publicMetadata?.role === 'admin'
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -26,6 +29,14 @@ function SearchContent() {
             </div>
           </Link>
           <div className="flex gap-2 items-center">
+            {isAdmin && (
+              <Link href="/admin">
+                <Button size="sm" variant="outline" className="gap-2">
+                  <Shield className="w-4 h-4" />
+                  Admin
+                </Button>
+              </Link>
+            )}
             <Link href="/batches">
               <Button size="sm" variant="outline" className="gap-2">
                 <Inbox className="w-4 h-4" />
@@ -39,6 +50,7 @@ function SearchContent() {
                 Home
               </Button>
             </Link>
+            <UserButton />
           </div>
         </div>
       </header>

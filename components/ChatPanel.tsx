@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Send, Sparkles, Wrench } from 'lucide-react'
 import { streamAgent } from '@/lib/api'
+import { useBackendAuth } from '@/lib/useBackend'
 
 interface Msg {
   id: string
@@ -21,6 +22,7 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
   const router = useRouter()
+  const getAuth = useBackendAuth()
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -49,7 +51,14 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     const patch = (fn: (x: Msg) => Msg) =>
       setMessages((m) => m.map((x) => (x.id === botMsg.id ? fn(x) : x)))
 
-    await streamAgent(t, {
+    const auth = await getAuth()
+    if (!auth) {
+      patch((x) => ({ ...x, content: '⚠️ not signed in' }))
+      setBusy(false)
+      return
+    }
+
+    await streamAgent(t, auth, {
       onDelta: (d) => patch((x) => ({ ...x, content: x.content + d })),
       onTool: (name) => patch((x) => ({ ...x, tools: [...(x.tools || []), name] })),
       onError: (detail) =>

@@ -1,3 +1,4 @@
+import { ClerkProvider } from '@clerk/nextjs'
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Crimson_Text, Inter } from 'next/font/google'
@@ -52,13 +53,15 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${crimsonText.variable}`} suppressHydrationWarning>
-      <body className="antialiased font-sans bg-background text-foreground">
-        <ThemeProvider>
-          {children}
-        </ThemeProvider>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className={`${inter.variable} ${crimsonText.variable}`} suppressHydrationWarning>
+        <body className="antialiased font-sans bg-background text-foreground">
+          <ThemeProvider>
+            {children}
+          </ThemeProvider>
+          {process.env.NODE_ENV === 'production' && <Analytics />}
+        </body>
+      </html>
+    </ClerkProvider>
   )
 }

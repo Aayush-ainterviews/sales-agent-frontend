@@ -1,5 +1,17 @@
-// Browser-side client for the backend, via same-origin /api/* proxy routes.
-// The bearer token stays server-side (in the route handlers) — never here.
+// Browser-side client that talks to the backend DIRECTLY (direct-connect), passing a
+// short-lived Clerk JWT as the bearer. No same-origin proxy, so no 60s function cap —
+// long agent turns stream to completion. Get `auth` from useBackendAuth().
+
+import { BACKEND_URL } from './backend'
+
+export interface Auth {
+  token: string
+  userId: string
+}
+
+function authHeaders(token: string): HeadersInit {
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+}
 
 export interface AgentHandlers {
   onDelta?: (text: string) => void       // streamed assistant text
@@ -10,17 +22,27 @@ export interface AgentHandlers {
 }
 
 // Stream one turn. Parses the SSE frames the backend emits (pi events).
-export async function streamAgent(message: string, h: AgentHandlers, signal?: AbortSignal) {
+export async function streamAgent(
+  message: string,
+  auth: Auth,
+  h: AgentHandlers,
+  signal?: AbortSignal,
+) {
   let res: Response
   try {
-    res = await fetch('/api/agent', {
+    res = await fetch(`${BACKEND_URL}/users/${auth.userId}/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(auth.token),
       body: JSON.stringify({ message }),
       signal,
     })
   } catch (e) {
     h.onError?.(String(e))
+    h.onDone?.()
+    return
+  }
+  if (res.status === 409) {
+    h.onError?.('a turn is already running')
     h.onDone?.()
     return
   }
@@ -99,28 +121,79 @@ function finalText(agentEnd: any): string {
   return ''
 }
 
-// --- batch approval queue ---
+// --- batch approval queue (own batches) ---
 
 export interface BatchSummary {
   id: string
   campaign: string | null
   leads: number
   status: string
+  user_id?: string
   result?: { sent?: number; failed?: number } | null
 }
 
-export async function listBatches(status = 'pending'): Promise<BatchSummary[]> {
-  const r = await fetch(`/api/batches?status=${encodeURIComponent(status)}`, { cache: 'no-store' })
+export async function listBatches(auth: Auth, status = 'pending'): Promise<BatchSummary[]> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/batches?status=${encodeURIComponent(status)}`, {
+    headers: authHeaders(auth.token),
+    cache: 'no-store',
+  })
   const j = await r.json().catch(() => ({}))
   return j.batches ?? []
 }
 
-export async function approveBatch(id: string) {
-  const r = await fetch(`/api/batches/${id}/approve`, { method: 'POST' })
+export async function approveBatch(auth: Auth, id: string) {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/batches/${id}/approve`, {
+    method: 'POST',
+    headers: authHeaders(auth.token),
+  })
   return r.json()
 }
 
-export async function rejectBatch(id: string) {
-  const r = await fetch(`/api/batches/${id}/reject`, { method: 'POST' })
+export async function rejectBatch(auth: Auth, id: string) {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/batches/${id}/reject`, {
+    method: 'POST',
+    headers: authHeaders(auth.token),
+  })
+  return r.json()
+}
+
+// --- admin (role=admin): monitor all users + unstick ---
+
+export interface AdminUser {
+  user_id: string
+  sandbox_id: string | null
+  status: string
+  updated_at?: string | null
+  turn: { busy: boolean; busy_age_s?: number; active_sandbox?: string | null }
+}
+
+export async function adminUsers(auth: Auth): Promise<AdminUser[]> {
+  const r = await fetch(`${BACKEND_URL}/admin/users`, { headers: authHeaders(auth.token), cache: 'no-store' })
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return (await r.json()).users ?? []
+}
+
+export async function adminBatches(auth: Auth, status = 'pending'): Promise<BatchSummary[]> {
+  const r = await fetch(`${BACKEND_URL}/admin/batches?status=${encodeURIComponent(status)}`, {
+    headers: authHeaders(auth.token),
+    cache: 'no-store',
+  })
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return (await r.json()).batches ?? []
+}
+
+export async function adminReset(auth: Auth, userId: string) {
+  const r = await fetch(`${BACKEND_URL}/admin/users/${encodeURIComponent(userId)}/reset`, {
+    method: 'POST',
+    headers: authHeaders(auth.token),
+  })
+  return r.json()
+}
+
+export async function adminAbort(auth: Auth, userId: string) {
+  const r = await fetch(`${BACKEND_URL}/admin/users/${encodeURIComponent(userId)}/abort`, {
+    method: 'POST',
+    headers: authHeaders(auth.token),
+  })
   return r.json()
 }

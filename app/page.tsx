@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { ArrowRight, Search, MapPin, Users, Mail } from 'lucide-react'
@@ -29,6 +30,14 @@ export default function LandingPage() {
                 Start Searching
               </Button>
             </Link>
+            <SignedOut>
+              <SignInButton mode="modal">
+                <Button variant="outline">Sign in</Button>
+              </SignInButton>
+            </SignedOut>
+            <SignedIn>
+              <UserButton />
+            </SignedIn>
           </div>
           <div className="md:hidden flex gap-2 items-center">
             <ThemeSwitcher />

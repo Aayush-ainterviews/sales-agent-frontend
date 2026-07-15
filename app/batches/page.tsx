@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { UserButton } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { listBatches, approveBatch, rejectBatch, type BatchSummary } from '@/lib/api'
+import { useBackendAuth } from '@/lib/useBackend'
 import { Search, ArrowLeft, RefreshCw, Check, X, Mail } from 'lucide-react'
 
 export default function BatchesPage() {
@@ -12,11 +14,13 @@ export default function BatchesPage() {
   const [loading, setLoading] = useState(true)
   const [acting, setActing] = useState<string | null>(null)
   const [note, setNote] = useState<string>('')
+  const getAuth = useBackendAuth()
 
   async function load() {
     setLoading(true)
     try {
-      setBatches(await listBatches('pending'))
+      const auth = await getAuth()
+      setBatches(auth ? await listBatches(auth) : [])
     } finally {
       setLoading(false)
     }
@@ -24,13 +28,16 @@ export default function BatchesPage() {
 
   useEffect(() => {
     void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function onApprove(id: string) {
     setActing(id)
     setNote('')
     try {
-      const r = await approveBatch(id)
+      const auth = await getAuth()
+      if (!auth) { setNote('Not signed in.'); return }
+      const r = await approveBatch(auth, id)
       setNote(
         r?.ok
           ? `Sent: ${r.result?.sent ?? 0} · Failed: ${r.result?.failed ?? 0}`
@@ -46,7 +53,9 @@ export default function BatchesPage() {
     setActing(id)
     setNote('')
     try {
-      await rejectBatch(id)
+      const auth = await getAuth()
+      if (!auth) { setNote('Not signed in.'); return }
+      await rejectBatch(auth, id)
       setNote('Batch rejected.')
     } finally {
       setActing(null)
@@ -74,6 +83,7 @@ export default function BatchesPage() {
                 Agent
               </Button>
             </Link>
+            <UserButton />
           </div>
         </div>
       </header>
