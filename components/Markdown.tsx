@@ -63,7 +63,7 @@ export function Markdown({
                     {text}
                     <Download className="w-3 h-3 shrink-0" />
                   </button>
-                  {onSheet && /\.json$/i.test(text) && (
+                  {onSheet && /\.(json|csv|tsv)$/i.test(text) && (
                     <button
                       type="button"
                       onClick={() => onSheet(text)}
