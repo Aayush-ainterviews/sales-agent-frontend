@@ -2,9 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail } from 'lucide-react'
+import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip } from 'lucide-react'
 import {
-  streamAgent, abortTurn, steerTurn, listBatches, approveBatch, rejectBatch, fetchFileBlob,
+  streamAgent, abortTurn, steerTurn, listBatches, approveBatch, rejectBatch, fetchFileBlob, uploadFile,
   type Auth, type BatchSummary,
 } from '@/lib/api'
 import { useBackendAuth } from '@/lib/useBackend'
@@ -50,7 +50,10 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [queued, setQueuedState] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<{ path: string; name: string }[]>([])
+  const [uploading, setUploading] = useState(false)
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
   const router = useRouter()
@@ -169,14 +172,35 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     }
   }
 
+  async function onPickFiles(files: FileList | null) {
+    if (!files?.length) return
+    const auth = await getAuth()
+    if (!auth) return
+    setUploading(true)
+    try {
+      for (const f of Array.from(files)) {
+        const res = await uploadFile(auth, f)
+        if (res?.path) setAttachments((a) => [...a, { path: res.path, name: res.name }])
+      }
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = '' // allow re-picking the same file
+    }
+  }
+
   function onSubmit() {
     const t = input.trim()
-    if (!t) return
+    if (!t && attachments.length === 0) return
+    const note = attachments.length
+      ? `${t ? '\n\n' : ''}[Attached file${attachments.length > 1 ? 's' : ''}: ${attachments.map((a) => a.path).join(', ')}]`
+      : ''
+    const full = t + note
     setInput('')
+    setAttachments([])
     if (busy) {
-      setQueued(t) // hold it — auto-sends when the turn ends, or Steer to inject now
+      setQueued(full) // hold it — auto-sends when the turn ends, or Steer to inject now
     } else {
-      void runTurn(t)
+      void runTurn(full)
     }
   }
 
@@ -381,7 +405,51 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
           </div>
         )}
 
+        {/* uploaded attachments (sent with the next message) */}
+        {(attachments.length > 0 || uploading) && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachments.map((a) => (
+              <span
+                key={a.path}
+                className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border border-border bg-secondary text-foreground"
+              >
+                <Paperclip className="w-3 h-3 text-muted-foreground" />
+                <span className="max-w-[160px] truncate">{a.name}</span>
+                <button
+                  onClick={() => setAttachments((x) => x.filter((y) => y.path !== a.path))}
+                  className="text-muted-foreground hover:text-foreground"
+                  title="Remove"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            ))}
+            {uploading && (
+              <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border border-border bg-secondary text-muted-foreground">
+                <Loader2 className="w-3 h-3 animate-spin" /> Uploading…
+              </span>
+            )}
+          </div>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => void onPickFiles(e.target.files)}
+        />
+
         <form onSubmit={(e) => { e.preventDefault(); onSubmit() }} className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Attach a file"
+            className="p-2 bg-secondary border border-border text-foreground rounded-lg hover:bg-background transition disabled:opacity-50 shrink-0"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <input
             type="text"
             value={input}
@@ -394,15 +462,15 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
               type="button"
               onClick={() => void stop()}
               title="Stop the current turn"
-              className="p-2 bg-secondary border border-border text-foreground rounded-lg hover:bg-background transition"
+              className="p-2 bg-secondary border border-border text-foreground rounded-lg hover:bg-background transition shrink-0"
             >
               <Square className="w-4 h-4" />
             </button>
           ) : (
             <button
               type="submit"
-              disabled={!input.trim()}
-              className="p-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition disabled:opacity-50"
+              disabled={!input.trim() && attachments.length === 0}
+              className="p-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition disabled:opacity-50 shrink-0"
             >
               <Send className="w-4 h-4" />
             </button>

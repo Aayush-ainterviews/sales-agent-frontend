@@ -24,9 +24,13 @@ export interface AgentHandlers {
 // Pull the human-relevant argument out of a tool_execution_start event: the file path
 // for read/write/edit, the command for bash. Field name varies, so probe the usual keys.
 function toolDetail(ev: any): string | undefined {
-  const a = ev.arguments ?? ev.toolInput ?? ev.input ?? ev.args ?? ev.parameters
+  const a =
+    ev.arguments ?? ev.toolInput ?? ev.input ?? ev.args ?? ev.parameters ??
+    ev.toolCall?.arguments ?? ev.tool?.arguments ?? ev.toolCall?.input
   if (a && typeof a === 'object') {
-    const v = a.file_path ?? a.path ?? a.filename ?? a.command ?? a.pattern
+    const v =
+      a.file_path ?? a.filePath ?? a.path ?? a.filename ?? a.file ??
+      a.command ?? a.cmd ?? a.pattern
     if (typeof v === 'string') return v
   }
   return undefined
@@ -207,6 +211,27 @@ export async function rejectBatch(auth: Auth, id: string) {
 }
 
 // --- output file download (from the user's sandbox) ---
+
+export interface Upload {
+  path: string
+  name: string
+  size: number
+}
+
+// Upload a file into the user's sandbox (stored under uploads/). Returns its sandbox
+// path so the caller can reference it in the next message to the agent.
+export async function uploadFile(auth: Auth, file: File): Promise<Upload | null> {
+  const fd = new FormData()
+  fd.append('file', file)
+  // NOTE: don't set Content-Type — the browser adds the multipart boundary itself.
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${auth.token}` },
+    body: fd,
+  })
+  if (!r.ok) return null
+  return r.json()
+}
 
 // Fetch one output file (authenticated) as a Blob so the browser can save it.
 // Returns null if the file is missing/unreadable.

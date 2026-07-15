@@ -91,7 +91,7 @@ export default function DashboardPage() {
         </main>
 
         {/* AI Chat Sidebar */}
-        <ChatPanel selectedCampaign={selectedCampaign} />
+        <ChatPanel />
       </div>
     </div>
   )
