@@ -10,7 +10,15 @@ export function useBackendAuth() {
   const { getToken, userId } = useAuth()
   return async (): Promise<Auth | null> => {
     if (!userId) return null
-    const token = await getToken({ template: 'backend' })
+    // Prefer the "backend" JWT template (carries the `role` claim for admin). If it
+    // isn't configured in Clerk yet, fall back to the default session token so regular
+    // streaming still works — only admin-role gating needs the template's claim.
+    let token: string | null = null
+    try {
+      token = await getToken({ template: 'backend' })
+    } catch {
+      token = await getToken()
+    }
     if (!token) return null
     return { token, userId }
   }
