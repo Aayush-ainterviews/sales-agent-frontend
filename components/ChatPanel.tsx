@@ -2,9 +2,10 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip } from 'lucide-react'
+import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip, Table, ExternalLink } from 'lucide-react'
 import {
   streamAgent, abortTurn, steerTurn, listBatches, approveBatch, rejectBatch, fetchFileBlob, uploadFile,
+  exportSheet as apiExportSheet,
   type Auth, type BatchSummary,
 } from '@/lib/api'
 import { useBackendAuth } from '@/lib/useBackend'
@@ -21,10 +22,11 @@ interface ToolCall {
 const short = (s: string, n = 42) => (s.length > n ? '…' + s.slice(-n) : s)
 
 type BatchState = 'pending' | 'sending' | 'sent' | 'rejected' | 'failed'
+type SheetState = 'creating' | 'ready' | 'failed'
 
 interface Msg {
   id: string
-  role: 'user' | 'assistant' | 'batch'
+  role: 'user' | 'assistant' | 'batch' | 'sheet'
   content: string
   tools: ToolCall[]
   done: boolean
@@ -32,6 +34,9 @@ interface Msg {
   batch?: BatchSummary
   batchState?: BatchState
   batchNote?: string
+  sheetState?: SheetState
+  sheetUrl?: string
+  sheetNote?: string
 }
 
 const TOOL_LABEL: Record<string, string> = {
@@ -255,6 +260,23 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     URL.revokeObjectURL(url)
   }
 
+  async function exportSheet(path: string) {
+    const id = 's' + Date.now()
+    setMessages((m) => [
+      ...m,
+      { id, role: 'sheet', content: '', tools: [], done: true, sheetState: 'creating' },
+    ])
+    const auth = await getAuth()
+    if (!auth) {
+      patchMsg(id, (x) => ({ ...x, sheetState: 'failed', sheetNote: 'not signed in' }))
+      return
+    }
+    const { url, error } = await apiExportSheet(auth, path)
+    patchMsg(id, (x) =>
+      url ? { ...x, sheetState: 'ready', sheetUrl: url } : { ...x, sheetState: 'failed', sheetNote: error },
+    )
+  }
+
   async function decideBatch(msgId: string, batchId: string, action: 'approve' | 'reject') {
     const auth = await getAuth()
     if (!auth) return
@@ -357,6 +379,35 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
             )
           }
 
+          if (m.role === 'sheet') {
+            const st = m.sheetState ?? 'creating'
+            return (
+              <div key={m.id} className="flex justify-start">
+                <div className="max-w-[90%] px-3 py-3 rounded-lg border border-border bg-secondary">
+                  <div className="flex items-center gap-2">
+                    <Table className="w-4 h-4 text-green-700 dark:text-green-500" />
+                    {st === 'creating' ? (
+                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Creating Google Sheet…
+                      </span>
+                    ) : st === 'ready' ? (
+                      <a
+                        href={m.sheetUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:opacity-70"
+                      >
+                        Open Google Sheet <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    ) : (
+                      <span className="text-sm text-red-500">Sheet export failed{m.sheetNote ? ` — ${m.sheetNote}` : ''}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
           // assistant
           return (
             <div key={m.id} className="flex justify-start">
@@ -381,7 +432,11 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
                   </div>
                 )}
 
-                {m.content && <Markdown onDownload={downloadFile}>{m.content}</Markdown>}
+                {m.content && (
+                  <Markdown onDownload={downloadFile} onSheet={exportSheet}>
+                    {m.content}
+                  </Markdown>
+                )}
 
                 {!m.done && (m.tools.length === 0 || m.tools[m.tools.length - 1].done) && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">

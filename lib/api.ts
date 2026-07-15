@@ -252,6 +252,19 @@ export async function fetchFileBlob(auth: Auth, path: string): Promise<Blob | nu
   return r.blob()
 }
 
+// Turn an output JSON file into a link-viewable Google Sheet; returns the sheet URL.
+// Returns { error } on failure (e.g. 501 if Sheets export isn't configured on the backend).
+export async function exportSheet(auth: Auth, path: string): Promise<{ url?: string; error?: string }> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/sheet`, {
+    method: 'POST',
+    headers: authHeaders(auth.token),
+    body: JSON.stringify({ path }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) return { error: j?.detail || `HTTP ${r.status}` }
+  return { url: j?.url }
+}
+
 // --- admin (role=admin): monitor all users + unstick ---
 
 export interface AdminUser {
