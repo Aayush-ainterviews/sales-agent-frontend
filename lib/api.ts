@@ -219,17 +219,26 @@ export interface Upload {
 }
 
 // Upload a file into the user's sandbox (stored under uploads/). Returns its sandbox
-// path so the caller can reference it in the next message to the agent.
-export async function uploadFile(auth: Auth, file: File): Promise<Upload | null> {
+// path so the caller can reference it in the next message. Throws with the HTTP status +
+// body on failure so the UI can surface the real reason instead of silently doing nothing.
+export async function uploadFile(auth: Auth, file: File): Promise<Upload> {
   const fd = new FormData()
   fd.append('file', file)
   // NOTE: don't set Content-Type — the browser adds the multipart boundary itself.
-  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/upload`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${auth.token}` },
-    body: fd,
-  })
-  if (!r.ok) return null
+  let r: Response
+  try {
+    r = await fetch(`${BACKEND_URL}/users/${auth.userId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${auth.token}` },
+      body: fd,
+    })
+  } catch (e) {
+    throw new Error(`network/CORS error: ${String(e)}`)
+  }
+  if (!r.ok) {
+    const body = await r.text().catch(() => '')
+    throw new Error(`HTTP ${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`)
+  }
   return r.json()
 }
 

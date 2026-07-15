@@ -52,6 +52,7 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const [queued, setQueuedState] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<{ path: string; name: string }[]>([])
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -174,13 +175,23 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
 
   async function onPickFiles(files: FileList | null) {
     if (!files?.length) return
+    setUploadError(null)
     const auth = await getAuth()
-    if (!auth) return
+    if (!auth) {
+      setUploadError('not signed in')
+      return
+    }
     setUploading(true)
     try {
       for (const f of Array.from(files)) {
-        const res = await uploadFile(auth, f)
-        if (res?.path) setAttachments((a) => [...a, { path: res.path, name: res.name }])
+        try {
+          const res = await uploadFile(auth, f)
+          setAttachments((a) => [...a, { path: res.path, name: res.name }])
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setUploadError(`Upload failed (${f.name}): ${msg}`)
+          console.error('upload failed', f.name, e)
+        }
       }
     } finally {
       setUploading(false)
@@ -400,6 +411,17 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
             </button>
             <span className="text-[11px] text-muted-foreground">queued</span>
             <button onClick={() => setQueued(null)} title="Remove" className="text-muted-foreground hover:text-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* upload error (surfaced so failures aren't silent) */}
+        {uploadError && (
+          <div className="mb-2 flex items-start gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-foreground">
+            <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+            <span className="flex-1 break-words">{uploadError}</span>
+            <button onClick={() => setUploadError(null)} className="text-muted-foreground hover:text-foreground">
               <X className="w-4 h-4" />
             </button>
           </div>
