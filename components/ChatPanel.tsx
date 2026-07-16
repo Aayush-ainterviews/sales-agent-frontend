@@ -202,8 +202,9 @@ export default function ChatPanel({
 
     // The backend collects draft batches from the sandbox outbox JUST AFTER agent_end (a
     // slow sandbox read), so a single immediate check races it and misses the batch. Poll
-    // briefly in the background until one shows up (or give up).
-    void pollBatchesInline(auth)
+    // briefly in the background until one shows up (or give up). Each poll mints a fresh
+    // token — a long turn's start-time token would be expired by now.
+    void pollBatchesInline()
 
     // flush a message the user queued while this turn was running
     const q = queuedRef.current
@@ -213,8 +214,11 @@ export default function ChatPanel({
     }
   }
 
-  // add any new pending batches as approval cards; returns how many were added
-  async function loadBatchesInline(auth: Auth): Promise<number> {
+  // add any new pending batches as approval cards; returns how many were added.
+  // Mints its own fresh token each call (callers may run long after the turn started).
+  async function loadBatchesInline(): Promise<number> {
+    const auth = await getAuth()
+    if (!auth) return 0
     try {
       const pend = await listBatches(auth, 'pending')
       const fresh = pend.filter((b) => !shownBatches.current.has(b.id))
@@ -238,9 +242,9 @@ export default function ChatPanel({
     }
   }
 
-  async function pollBatchesInline(auth: Auth) {
+  async function pollBatchesInline() {
     for (let i = 0; i < 6; i++) {
-      if ((await loadBatchesInline(auth)) > 0) return
+      if ((await loadBatchesInline()) > 0) return
       await new Promise((r) => setTimeout(r, 1500))
     }
   }
@@ -305,11 +309,14 @@ export default function ChatPanel({
 
   async function stop() {
     abortedRef.current = true
+    // Signal the backend to abort the daemon FIRST — while the turn is still active it
+    // returns 200 and actually stops it. (Aborting the client fetch first would disconnect
+    // and race the release, so the explicit call then 409s and the daemon may keep going.)
+    const auth = await getAuth()
+    if (auth) await abortTurn(cid, auth)
     abortRef.current?.abort()
     setMessages((m) => m.map((x) => (x.role === 'assistant' && !x.done ? { ...x, done: true } : x)))
     setBusy(false)
-    const auth = await getAuth()
-    if (auth) void abortTurn(cid, auth)
   }
 
   async function downloadFile(path: string) {
