@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip } from 'lucide-react'
 import {
   streamAgent, abortTurn, steerTurn, listBatches, approveBatch, rejectBatch, fetchFileBlob, uploadFile,
@@ -70,7 +69,6 @@ export default function ChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
-  const router = useRouter()
   const getAuth = useBackendAuth()
 
   const abortRef = useRef<AbortController | null>(null)
@@ -91,7 +89,6 @@ export default function ChatPanel({
     if (initialQuery && !started.current) {
       started.current = true
       void runTurn(initialQuery)
-      router.replace('/search') // refresh won't re-fire the query
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery])
@@ -144,12 +141,34 @@ export default function ChatPanel({
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
+    // Smooth "typewriter" reveal: network deltas arrive in bursts, so buffer them and
+    // reveal a few characters per animation frame — feels like realtime streaming instead
+    // of whole lines popping in. The chunk size scales with the backlog so it never lags.
+    const rev = { buffer: '', raf: null as number | null }
+    const pump = () => {
+      if (!rev.buffer) { rev.raf = null; return }
+      const n = Math.max(2, Math.ceil(rev.buffer.length / 5))
+      const chunk = rev.buffer.slice(0, n)
+      rev.buffer = rev.buffer.slice(n)
+      patch((x) => ({ ...x, content: x.content + chunk }))
+      rev.raf = requestAnimationFrame(pump)
+    }
+    const kick = () => { if (rev.raf == null) rev.raf = requestAnimationFrame(pump) }
+    const flush = () => {
+      if (rev.raf != null) { cancelAnimationFrame(rev.raf); rev.raf = null }
+      if (rev.buffer) {
+        const rest = rev.buffer
+        rev.buffer = ''
+        patch((x) => ({ ...x, content: x.content + rest }))
+      }
+    }
+
     await streamAgent(
       cid,
       t,
       auth,
       {
-        onDelta: (d) => patch((x) => ({ ...x, content: x.content + d })),
+        onDelta: (d) => { rev.buffer += d; kick() },
         onTool: (name, detail) => patch((x) => ({ ...x, tools: [...x.tools, { name, done: false, detail }] })),
         onToolEnd: (name, isError) =>
           patch((x) => {
@@ -164,9 +183,13 @@ export default function ChatPanel({
           }),
         onError: (detail) => {
           if (abortedRef.current) return
+          flush()
           patch((x) => ({ ...x, content: (x.content ? x.content + '\n\n' : '') + '⚠️ ' + detail }))
         },
-        onDone: () => patch((x) => ({ ...x, done: true })),
+        onDone: () => {
+          flush() // reveal anything still buffered, then mark the turn done
+          patch((x) => ({ ...x, done: true }))
+        },
       },
       ctrl.signal,
     )
