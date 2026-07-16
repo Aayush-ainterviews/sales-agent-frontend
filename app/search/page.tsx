@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import ChatPanel from '@/components/ChatPanel'
 import DataTable from '@/components/DataTable'
+import BatchApprovalPanel from '@/components/BatchApprovalPanel'
 import ConversationSidebar from '@/components/ConversationSidebar'
 import { useBackendAuth } from '@/lib/useBackend'
 import { listConversations, createConversation, deleteConversation, type Conversation } from '@/lib/api'
@@ -42,10 +43,23 @@ function SearchContent() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(256)
 
-  // side table panel
+  // side panel: an editable table OR a batch approval (only one open at a time)
   const [table, setTable] = useState<{ id: number; source: TableSource } | null>(null)
+  const [batchPanelId, setBatchPanelId] = useState<string | null>(null)
   const tableId = useRef(0)
-  const openTable = (source: TableSource) => setTable({ id: ++tableId.current, source })
+  const openTable = (source: TableSource) => {
+    setBatchPanelId(null)
+    setTable({ id: ++tableId.current, source })
+  }
+  const openBatch = (id: string) => {
+    setTable(null)
+    setBatchPanelId(id)
+  }
+  const rightOpen = !!table || !!batchPanelId
+  const closeRight = () => {
+    setTable(null)
+    setBatchPanelId(null)
+  }
 
   // resizable split (desktop): drag the divider to set the table panel's width
   const [tableWidth, setTableWidth] = useState(560)
@@ -140,7 +154,7 @@ function SearchContent() {
     if (!auth) return
     const cid = await createConversation(auth)
     if (cid) {
-      setTable(null) // a table belongs to a conversation's sandbox — don't carry it across
+      closeRight() // panels belong to a conversation's context — don't carry them across
       setQueryConv(null)
       setActive(cid)
       await refreshConversations()
@@ -148,7 +162,7 @@ function SearchContent() {
   }
 
   function onSelect(cid: string) {
-    setTable(null)
+    closeRight()
     setQueryConv(null)
     setActive(cid)
   }
@@ -156,7 +170,7 @@ function SearchContent() {
   async function onDelete(cid: string) {
     const auth = await getAuth()
     if (!auth) return
-    setTable(null)
+    closeRight()
     await deleteConversation(cid, auth)
     const list = await refreshConversations()
     if (cid === activeCid) {
@@ -240,13 +254,14 @@ function SearchContent() {
           </>
         )}
 
-        <div className={table ? 'hidden md:block flex-1 min-w-0 border-r border-border' : 'flex-1 min-w-0'}>
+        <div className={rightOpen ? 'hidden md:block flex-1 min-w-0 border-r border-border' : 'flex-1 min-w-0'}>
           {activeCid ? (
             <ChatPanel
               key={activeCid}
               cid={activeCid}
               initialQuery={initialQuery}
               onShowTable={openTable}
+              onOpenBatch={openBatch}
               onTurnComplete={() => void onTurnComplete()}
             />
           ) : (
@@ -254,7 +269,7 @@ function SearchContent() {
           )}
         </div>
 
-        {table && activeCid && (
+        {rightOpen && activeCid && (
           <>
             <div
               onMouseDown={startDrag}
@@ -265,7 +280,16 @@ function SearchContent() {
               className="w-full md:w-[var(--table-w)] min-w-0 shrink-0"
               style={{ ['--table-w' as string]: `${tableWidth}px` } as React.CSSProperties}
             >
-              <DataTable key={table.id} cid={activeCid} source={table.source} onClose={() => setTable(null)} />
+              {table ? (
+                <DataTable key={table.id} cid={activeCid} source={table.source} onClose={() => setTable(null)} />
+              ) : batchPanelId ? (
+                <BatchApprovalPanel
+                  key={batchPanelId}
+                  batchId={batchPanelId}
+                  onClose={() => setBatchPanelId(null)}
+                  onResolved={() => void refreshConversations()}
+                />
+              ) : null}
             </div>
           </>
         )}

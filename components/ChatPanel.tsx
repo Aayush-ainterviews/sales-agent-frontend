@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip } from 'lucide-react'
 import {
-  streamAgent, abortTurn, steerTurn, listBatches, approveBatch, rejectBatch, fetchFileBlob, uploadFile,
+  streamAgent, abortTurn, steerTurn, listBatches, fetchFileBlob, uploadFile,
   fetchConversationMessages,
   type Auth, type BatchSummary,
 } from '@/lib/api'
@@ -51,11 +51,13 @@ export default function ChatPanel({
   cid,
   initialQuery,
   onShowTable,
+  onOpenBatch,
   onTurnComplete,
 }: {
   cid: string
   initialQuery?: string
   onShowTable?: (source: TableSource) => void
+  onOpenBatch?: (batchId: string) => void
   onTurnComplete?: () => void
 }) {
   const [messages, setMessages] = useState<Msg[]>([])
@@ -314,30 +316,6 @@ export default function ChatPanel({
     URL.revokeObjectURL(url)
   }
 
-  async function decideBatch(msgId: string, batchId: string, action: 'approve' | 'reject') {
-    const auth = await getAuth()
-    if (!auth) return
-    patchMsg(msgId, (x) => ({ ...x, batchState: action === 'approve' ? 'sending' : 'rejected' }))
-    try {
-      if (action === 'reject') {
-        await rejectBatch(auth, batchId)
-        patchMsg(msgId, (x) => ({ ...x, batchState: 'rejected', batchNote: 'Rejected.' }))
-        return
-      }
-      const r = await approveBatch(auth, batchId)
-      const ok = r?.ok
-      const sent = r?.result?.sent ?? 0
-      const failed = r?.result?.failed ?? 0
-      patchMsg(msgId, (x) => ({
-        ...x,
-        batchState: ok ? 'sent' : 'failed',
-        batchNote: ok ? `Sent ${sent} · Failed ${failed}` : (r?.detail || r?.error || 'Send failed'),
-      }))
-    } catch (e) {
-      patchMsg(msgId, (x) => ({ ...x, batchState: 'failed', batchNote: String(e) }))
-    }
-  }
-
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Header */}
@@ -373,44 +351,22 @@ export default function ChatPanel({
           }
 
           if (m.role === 'batch') {
-            const st = m.batchState ?? 'pending'
             return (
               <div key={m.id} className="flex justify-start">
                 <div className="max-w-[90%] w-full px-3 py-3 rounded-lg border border-border bg-secondary">
                   <div className="flex items-center gap-2 mb-1">
                     <Mail className="w-4 h-4 text-foreground" />
-                    <span className="font-serif font-bold text-foreground">Approve outreach</span>
+                    <span className="font-serif font-bold text-foreground">Draft outreach ready</span>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     {m.batch?.campaign || 'Untitled batch'} · {m.batch?.leads ?? 0} recipients
                   </p>
-                  {st === 'pending' ? (
-                    <div className="flex gap-2 mt-3">
-                      <button
-                        onClick={() => void decideBatch(m.id, m.batch!.id, 'reject')}
-                        className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-background transition"
-                      >
-                        <X className="w-4 h-4" /> Reject
-                      </button>
-                      <button
-                        onClick={() => void decideBatch(m.id, m.batch!.id, 'approve')}
-                        className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-foreground text-background hover:bg-foreground/90 transition"
-                      >
-                        <Check className="w-4 h-4" /> Approve &amp; send
-                      </button>
-                    </div>
-                  ) : st === 'sending' ? (
-                    <div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
-                      <Loader2 className="w-4 h-4 animate-spin" /> Sending…
-                    </div>
-                  ) : (
-                    <div
-                      className={`mt-3 text-sm ${st === 'failed' ? 'text-red-500' : 'text-foreground'}`}
-                    >
-                      {st === 'sent' && <Check className="inline w-4 h-4 mr-1 text-green-600 dark:text-green-500" />}
-                      {m.batchNote}
-                    </div>
-                  )}
+                  <button
+                    onClick={() => m.batch && onOpenBatch?.(m.batch.id)}
+                    className="mt-3 flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-foreground text-background hover:bg-foreground/90 transition"
+                  >
+                    <Mail className="w-4 h-4" /> Review &amp; send
+                  </button>
                 </div>
               </div>
             )

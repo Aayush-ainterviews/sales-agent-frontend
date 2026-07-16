@@ -249,10 +249,47 @@ export async function listBatches(auth: Auth, status = 'pending'): Promise<Batch
   return j.batches ?? []
 }
 
-export async function approveBatch(auth: Auth, id: string) {
+export interface BatchLead {
+  email?: string
+  name?: string
+  subject?: string
+  body?: string
+  [k: string]: unknown
+}
+export interface BatchDetail {
+  id: string
+  status: string
+  campaign: string | null
+  leads: BatchLead[]
+}
+
+export async function getBatch(auth: Auth, id: string): Promise<BatchDetail | null> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/batches/${id}`, {
+    headers: authHeaders(auth.token),
+    cache: 'no-store',
+  })
+  if (!r.ok) return null
+  const j = await r.json().catch(() => ({}))
+  const batch = (j.batch || {}) as { campaign?: string | null; leads?: BatchLead[] }
+  return {
+    id: j.id,
+    status: j.status,
+    campaign: batch.campaign ?? null,
+    leads: Array.isArray(batch.leads) ? batch.leads : [],
+  }
+}
+
+// Approve a batch. Default is TEST mode (send to test_email / SEND_OVERRIDE_TO), never real
+// leads; pass { test: false } to send to the actual recipients.
+export async function approveBatch(
+  auth: Auth,
+  id: string,
+  opts?: { test?: boolean; testEmail?: string },
+) {
   const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/batches/${id}/approve`, {
     method: 'POST',
     headers: authHeaders(auth.token),
+    body: JSON.stringify({ test: opts?.test ?? true, test_email: opts?.testEmail ?? null }),
   })
   return r.json()
 }
