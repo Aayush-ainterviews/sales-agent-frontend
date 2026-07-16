@@ -9,6 +9,8 @@ import {
 } from '@/lib/api'
 import { useBackendAuth } from '@/lib/useBackend'
 import { Markdown } from '@/components/Markdown'
+import { parseMarkdownTables, type TableSource } from '@/lib/table'
+import { Table as TableIcon } from 'lucide-react'
 
 interface ToolCall {
   name: string
@@ -50,7 +52,7 @@ export default function ChatPanel({
   onShowTable,
 }: {
   initialQuery?: string
-  onShowTable?: (path: string) => void
+  onShowTable?: (source: TableSource) => void
 }) {
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
@@ -388,10 +390,26 @@ export default function ChatPanel({
                 )}
 
                 {m.content && (
-                  <Markdown onDownload={downloadFile} onTable={onShowTable}>
+                  <Markdown
+                    onDownload={downloadFile}
+                    onTable={onShowTable ? (path) => onShowTable({ kind: 'file', path }) : undefined}
+                  >
                     {m.content}
                   </Markdown>
                 )}
+
+                {/* open any table the agent RENDERED (markdown table) in the editable grid */}
+                {m.done && onShowTable &&
+                  parseMarkdownTables(m.content).map((t, ti) => (
+                    <button
+                      key={ti}
+                      onClick={() => onShowTable({ kind: 'grid', name: t.title, grid: t.grid })}
+                      className="mt-2 mr-2 inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-background transition"
+                    >
+                      <TableIcon className="w-3.5 h-3.5" /> Show in table
+                      <span className="text-muted-foreground">· {t.title}</span>
+                    </button>
+                  ))}
 
                 {!m.done && (m.tools.length === 0 || m.tools[m.tools.length - 1].done) && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">

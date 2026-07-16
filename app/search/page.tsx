@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { UserButton, useUser } from '@clerk/nextjs'
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import ChatPanel from '@/components/ChatPanel'
 import DataTable from '@/components/DataTable'
+import { type TableSource } from '@/lib/table'
 import { Search, ArrowLeft, Inbox, Shield, Table } from 'lucide-react'
 
 function SearchContent() {
@@ -15,8 +16,10 @@ function SearchContent() {
   const query = searchParams.get('q') || ''
   const { user } = useUser()
   const isAdmin = user?.publicMetadata?.role === 'admin'
-  // null = closed; { path } opens a file; { path: null } opens a blank new table
-  const [table, setTable] = useState<{ path: string | null } | null>(null)
+  // the open table (id keys the panel so a new source remounts it cleanly); null = closed
+  const [table, setTable] = useState<{ id: number; source: TableSource } | null>(null)
+  const tableId = useRef(0)
+  const openTable = (source: TableSource) => setTable({ id: ++tableId.current, source })
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -40,7 +43,7 @@ function SearchContent() {
                 </Button>
               </Link>
             )}
-            <Button size="sm" variant="outline" className="gap-2" onClick={() => setTable({ path: null })}>
+            <Button size="sm" variant="outline" className="gap-2" onClick={() => openTable({ kind: 'new' })}>
               <Table className="w-4 h-4" />
               New table
             </Button>
@@ -71,11 +74,11 @@ function SearchContent() {
               : 'max-w-3xl w-full mx-auto border-x border-border'
           }
         >
-          <ChatPanel initialQuery={query} onShowTable={(path) => setTable({ path })} />
+          <ChatPanel initialQuery={query} onShowTable={openTable} />
         </div>
         {table && (
           <div className="flex-1 min-w-0">
-            <DataTable path={table.path} onClose={() => setTable(null)} />
+            <DataTable key={table.id} source={table.source} onClose={() => setTable(null)} />
           </div>
         )}
       </div>

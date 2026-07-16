@@ -1,14 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2, X, Plus, Trash2, Download, Save, Table as TableIcon } from 'lucide-react'
 import { useBackendAuth } from '@/lib/useBackend'
 import { fetchFileText, writeFile } from '@/lib/api'
-import { parseTabular, serialize, toCsv, type Grid, type Row } from '@/lib/table'
+import { parseTabular, serialize, toCsv, type Grid, type Row, type TableSource } from '@/lib/table'
 
-// Side panel: a fully editable grid over a sandbox file (or a blank new table).
-// Edit cells, add/delete rows & columns, Save back to the sandbox, or Export CSV.
-export default function DataTable({ path, onClose }: { path: string | null; onClose: () => void }) {
+const slug = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'table'
+
+// Side panel: a fully editable grid over a sandbox file, a table lifted from the chat, or
+// a blank new table. Edit cells, add/delete rows & columns, Save back, or Export CSV.
+// Parent keys this by source so a new source remounts it (clean state, single load).
+export default function DataTable({ source, onClose }: { source: TableSource; onClose: () => void }) {
   const getAuth = useBackendAuth()
   const [grid, setGrid] = useState<Grid | null>(null)
   const [loading, setLoading] = useState(true)
@@ -16,30 +20,45 @@ export default function DataTable({ path, onClose }: { path: string | null; onCl
   const [saving, setSaving] = useState(false)
   const [note, setNote] = useState('')
 
-  const fileName = (path ? path.split('/').pop() : 'new-table.csv') || 'table.csv'
-  const savePath = path ?? 'uploads/new-table.csv'
+  const fileName =
+    source.kind === 'file' ? source.path.split('/').pop() || 'table'
+    : source.kind === 'grid' ? `${slug(source.name)}.csv`
+    : 'new-table.csv'
+  const savePath =
+    source.kind === 'file' ? source.path
+    : source.kind === 'grid' ? `uploads/${slug(source.name)}.csv`
+    : 'uploads/new-table.csv'
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      if (!path) {
-        setGrid({ columns: ['Column 1'], rows: [{ 'Column 1': '' }] })
-        return
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      setError('')
+      try {
+        if (source.kind === 'new') {
+          if (!cancelled) setGrid({ columns: ['Column 1'], rows: [{ 'Column 1': '' }] })
+          return
+        }
+        if (source.kind === 'grid') {
+          if (!cancelled) setGrid({ columns: [...source.grid.columns], rows: source.grid.rows.map((r) => ({ ...r })) })
+          return
+        }
+        const auth = await getAuth()
+        if (cancelled) return
+        if (!auth) { setError('not signed in'); return }
+        const text = await fetchFileText(auth, source.path)
+        if (cancelled) return
+        if (text == null) { setError('could not read file'); return }
+        setGrid(parseTabular(text, source.path))
+      } catch (e) {
+        if (!cancelled) setError(String(e))
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      const auth = await getAuth()
-      if (!auth) { setError('not signed in'); return }
-      const text = await fetchFileText(auth, path)
-      if (text == null) { setError('could not read file'); return }
-      setGrid(parseTabular(text, path))
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [path, getAuth])
-
-  useEffect(() => { void load() }, [load])
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // --- edits (immutable updates) ---
   const setCell = (ri: number, col: string, val: string) =>

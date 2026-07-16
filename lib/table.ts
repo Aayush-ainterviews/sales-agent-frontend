@@ -8,6 +8,61 @@ export interface Grid {
   rows: Row[]
 }
 
+// Where the DataTable panel gets its data.
+export type TableSource =
+  | { kind: 'file'; path: string }          // load + save back to a sandbox file
+  | { kind: 'grid'; name: string; grid: Grid } // data lifted from a rendered markdown table
+  | { kind: 'new' }                          // blank table the user fills in
+
+// --- markdown table extraction (so "Show in table" works on tables the agent renders) ---
+
+function stripMd(s: string): string {
+  return s
+    .replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$2') // [text](url) -> url (the useful data)
+    .replace(/[*`_]/g, '')
+    .trim()
+}
+
+function splitRow(line: string): string[] {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim())
+}
+
+const isSeparator = (line: string) => /^\|?[\s:|-]+\|?$/.test(line.trim()) && line.includes('-')
+
+// Find every GFM table in a markdown string, each with the nearest preceding heading/bold
+// as its title. Returns editable grids.
+export function parseMarkdownTables(md: string): { title: string; grid: Grid }[] {
+  const lines = md.split('\n')
+  const out: { title: string; grid: Grid }[] = []
+  let lastHeading = ''
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    const h = line.match(/^#{1,6}\s+(.*)$/) || line.match(/^\*\*(.+)\*\*:?$/)
+    if (h) { lastHeading = stripMd(h[1]); continue }
+    if (line.startsWith('|') && i + 1 < lines.length && isSeparator(lines[i + 1])) {
+      const header = splitRow(line).map(stripMd)
+      const columns: string[] = []
+      header.forEach((c, k) => {
+        let name = c || `col${k + 1}`
+        while (columns.includes(name)) name += '_'
+        columns.push(name)
+      })
+      const rows: Row[] = []
+      let j = i + 2
+      while (j < lines.length && lines[j].trim().startsWith('|')) {
+        const cells = splitRow(lines[j])
+        const row: Row = {}
+        columns.forEach((c, k) => { row[c] = stripMd(cells[k] ?? '') })
+        rows.push(row)
+        j++
+      }
+      if (rows.length) out.push({ title: lastHeading || 'Table', grid: { columns, rows } })
+      i = j - 1
+    }
+  }
+  return out
+}
+
 function cellToString(v: unknown): string {
   if (v === null || v === undefined) return ''
   if (typeof v === 'object') return JSON.stringify(v)
