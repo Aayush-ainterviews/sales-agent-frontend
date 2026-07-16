@@ -1,19 +1,22 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import ChatPanel from '@/components/ChatPanel'
-import { Search, ArrowLeft, Inbox, Shield } from 'lucide-react'
+import DataTable from '@/components/DataTable'
+import { Search, ArrowLeft, Inbox, Shield, Table } from 'lucide-react'
 
 function SearchContent() {
   const searchParams = useSearchParams()
   const query = searchParams.get('q') || ''
   const { user } = useUser()
   const isAdmin = user?.publicMetadata?.role === 'admin'
+  // null = closed; { path } opens a file; { path: null } opens a blank new table
+  const [table, setTable] = useState<{ path: string | null } | null>(null)
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -37,6 +40,10 @@ function SearchContent() {
                 </Button>
               </Link>
             )}
+            <Button size="sm" variant="outline" className="gap-2" onClick={() => setTable({ path: null })}>
+              <Table className="w-4 h-4" />
+              New table
+            </Button>
             <Link href="/batches">
               <Button size="sm" variant="outline" className="gap-2">
                 <Inbox className="w-4 h-4" />
@@ -55,9 +62,22 @@ function SearchContent() {
         </div>
       </header>
 
-      {/* Chat fills the rest */}
-      <div className="flex-1 min-h-0 max-w-3xl w-full mx-auto border-x border-border">
-        <ChatPanel initialQuery={query} />
+      {/* Chat + optional side table (side-by-side on desktop; table takes over on mobile) */}
+      <div className="flex-1 min-h-0 flex w-full">
+        <div
+          className={
+            table
+              ? 'hidden md:block flex-1 min-w-0 border-r border-border'
+              : 'max-w-3xl w-full mx-auto border-x border-border'
+          }
+        >
+          <ChatPanel initialQuery={query} onShowTable={(path) => setTable({ path })} />
+        </div>
+        {table && (
+          <div className="flex-1 min-w-0">
+            <DataTable path={table.path} onClose={() => setTable(null)} />
+          </div>
+        )}
       </div>
     </div>
   )

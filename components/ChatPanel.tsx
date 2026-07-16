@@ -45,7 +45,13 @@ const label = (name: string) => TOOL_LABEL[name] ?? name
 // Real streaming chat with the backend agent, with Claude-style mid-turn controls:
 // Stop (abort), queue-while-working, Steer (inject into the running turn), and inline
 // email/batch approval cards.
-export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
+export default function ChatPanel({
+  initialQuery,
+  onShowTable,
+}: {
+  initialQuery?: string
+  onShowTable?: (path: string) => void
+}) {
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -381,7 +387,11 @@ export default function ChatPanel({ initialQuery }: { initialQuery?: string }) {
                   </div>
                 )}
 
-                {m.content && <Markdown onDownload={downloadFile}>{m.content}</Markdown>}
+                {m.content && (
+                  <Markdown onDownload={downloadFile} onTable={onShowTable}>
+                    {m.content}
+                  </Markdown>
+                )}
 
                 {!m.done && (m.tools.length === 0 || m.tools[m.tools.length - 1].done) && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">

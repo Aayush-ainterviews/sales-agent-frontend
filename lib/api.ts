@@ -252,6 +252,22 @@ export async function fetchFileBlob(auth: Auth, path: string): Promise<Blob | nu
   return r.blob()
 }
 
+// Read a file's text content (for the editable table).
+export async function fetchFileText(auth: Auth, path: string): Promise<string | null> {
+  const blob = await fetchFileBlob(auth, path)
+  return blob ? blob.text() : null
+}
+
+// Save edited table content back to the sandbox file. Returns true on success.
+export async function writeFile(auth: Auth, path: string, content: string): Promise<boolean> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/file`, {
+    method: 'PUT',
+    headers: authHeaders(auth.token),
+    body: JSON.stringify({ path, content }),
+  })
+  return r.ok
+}
+
 
 // --- admin (role=admin): monitor all users + unstick ---
 

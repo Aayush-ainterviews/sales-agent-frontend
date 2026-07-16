@@ -2,7 +2,7 @@
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Download } from 'lucide-react'
+import { Download, Table } from 'lucide-react'
 
 // Inline code that looks like a file (has a dir separator + an extension, no spaces,
 // and isn't a bare directory) becomes a download link. Directories (trailing /) and
@@ -11,13 +11,16 @@ const isDownloadablePath = (s: string) => /^[^\s`]+\/[^\s`]*\.[A-Za-z0-9]{1,6}$/
 
 // Renders assistant markdown (GFM: tables, lists, links, code) with the app's
 // design tokens, so streamed agent output reads like prose instead of raw ** and ###.
-// `onDownload` turns file-path inline code into a download action.
+// `onDownload` turns file-path inline code into a download action; `onTable` adds a
+// "Show in table" action for tabular (json/csv/tsv) paths.
 export function Markdown({
   children,
   onDownload,
+  onTable,
 }: {
   children: string
   onDownload?: (path: string) => void
+  onTable?: (path: string) => void
 }) {
   return (
     <div className="text-sm leading-relaxed">
@@ -49,16 +52,29 @@ export function Markdown({
             const text = String(children)
             const isInline = !className && !text.includes('\n')
             if (isInline && onDownload && isDownloadablePath(text)) {
+              const tabular = /\.(json|csv|tsv)$/i.test(text)
               return (
-                <button
-                  type="button"
-                  onClick={() => onDownload(text)}
-                  title={`Download ${text}`}
-                  className="inline-flex items-center gap-1 px-1 py-0.5 rounded bg-background/70 border border-border text-[0.85em] font-mono text-blue-600 dark:text-blue-400 hover:opacity-70 break-words align-baseline"
-                >
-                  {text}
-                  <Download className="w-3 h-3 shrink-0" />
-                </button>
+                <span className="inline-flex items-center gap-1 align-baseline">
+                  <button
+                    type="button"
+                    onClick={() => onDownload(text)}
+                    title={`Download ${text}`}
+                    className="inline-flex items-center gap-1 px-1 py-0.5 rounded bg-background/70 border border-border text-[0.85em] font-mono text-blue-600 dark:text-blue-400 hover:opacity-70 break-words"
+                  >
+                    {text}
+                    <Download className="w-3 h-3 shrink-0" />
+                  </button>
+                  {onTable && tabular && (
+                    <button
+                      type="button"
+                      onClick={() => onTable(text)}
+                      title="Show in table"
+                      className="inline-flex items-center px-1 py-0.5 rounded border border-border text-foreground hover:bg-secondary"
+                    >
+                      <Table className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </span>
               )
             }
             return isInline ? (
