@@ -198,10 +198,12 @@ export default function ChatPanel({
 
     abortRef.current = null
     setBusy(false)
-
-    // pull any new draft batches this turn produced into the chat as approval cards
-    await loadBatchesInline(auth)
     onTurnComplete?.() // refresh the sidebar (title may have just been set from the 1st message)
+
+    // The backend collects draft batches from the sandbox outbox JUST AFTER agent_end (a
+    // slow sandbox read), so a single immediate check races it and misses the batch. Poll
+    // briefly in the background until one shows up (or give up).
+    void pollBatchesInline(auth)
 
     // flush a message the user queued while this turn was running
     const q = queuedRef.current
@@ -211,11 +213,12 @@ export default function ChatPanel({
     }
   }
 
-  async function loadBatchesInline(auth: Auth) {
+  // add any new pending batches as approval cards; returns how many were added
+  async function loadBatchesInline(auth: Auth): Promise<number> {
     try {
       const pend = await listBatches(auth, 'pending')
       const fresh = pend.filter((b) => !shownBatches.current.has(b.id))
-      if (!fresh.length) return
+      if (!fresh.length) return 0
       fresh.forEach((b) => shownBatches.current.add(b.id))
       setMessages((m) => [
         ...m,
@@ -229,8 +232,16 @@ export default function ChatPanel({
           batchState: 'pending',
         })),
       ])
+      return fresh.length
     } catch {
-      /* non-fatal */
+      return 0
+    }
+  }
+
+  async function pollBatchesInline(auth: Auth) {
+    for (let i = 0; i < 6; i++) {
+      if ((await loadBatchesInline(auth)) > 0) return
+      await new Promise((r) => setTimeout(r, 1500))
     }
   }
 
