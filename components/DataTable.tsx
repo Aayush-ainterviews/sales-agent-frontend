@@ -1,13 +1,22 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, X, Plus, Trash2, Download, Save, Table as TableIcon } from 'lucide-react'
+import { Loader2, X, Plus, Trash2, Download, Save, Table as TableIcon, ExternalLink } from 'lucide-react'
 import { useBackendAuth } from '@/lib/useBackend'
 import { fetchFileText, writeFile } from '@/lib/api'
 import { parseTabular, serialize, toCsv, type Grid, type Row, type TableSource } from '@/lib/table'
 
 const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'table'
+
+// If a cell value is a URL or email, return an openable href (else null).
+function linkHref(v: string): string | null {
+  const s = v.trim()
+  if (/^https?:\/\//i.test(s)) return s
+  if (/^www\.[^\s]+$/i.test(s)) return 'https://' + s
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return 'mailto:' + s
+  return null
+}
 
 // Side panel: a fully editable grid over a sandbox file, a table lifted from the chat, or
 // a blank new table. Edit cells, add/delete rows & columns, Save back, or Export CSV.
@@ -228,15 +237,31 @@ export default function DataTable({ source, onClose }: { source: TableSource; on
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </td>
-                  {grid.columns.map((col) => (
-                    <td key={col} className="border border-border p-0">
-                      <input
-                        value={row[col] ?? ''}
-                        onChange={(e) => setCell(ri, col, e.target.value)}
-                        className="w-full min-w-[8rem] bg-transparent px-2 py-1.5 text-foreground focus:outline-none focus:bg-secondary"
-                      />
-                    </td>
-                  ))}
+                  {grid.columns.map((col) => {
+                    const href = linkHref(row[col] ?? '')
+                    return (
+                      <td key={col} className="border border-border p-0">
+                        <div className="flex items-center min-w-[8rem]">
+                          <input
+                            value={row[col] ?? ''}
+                            onChange={(e) => setCell(ri, col, e.target.value)}
+                            className="flex-1 min-w-0 bg-transparent px-2 py-1.5 text-foreground focus:outline-none focus:bg-secondary"
+                          />
+                          {href && (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={`Open ${row[col]}`}
+                              className="px-1 shrink-0 text-blue-600 dark:text-blue-400 hover:opacity-70"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    )
+                  })}
                   <td className="border border-border" />
                 </tr>
               ))}
