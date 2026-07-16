@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { useBackendAuth } from '@/lib/useBackend'
 import {
-  adminUsers, adminBatches, adminReset, adminAbort,
-  type AdminUser, type BatchSummary,
+  adminConversations, adminBatches, adminReset, adminAbort,
+  type AdminConversation, type BatchSummary,
 } from '@/lib/api'
 import { Shield, ArrowLeft, RefreshCw, Loader2, RotateCcw, Square } from 'lucide-react'
 
@@ -17,7 +17,7 @@ export default function AdminPage() {
   const isAdmin = user?.publicMetadata?.role === 'admin'
   const getAuth = useBackendAuth()
 
-  const [users, setUsers] = useState<AdminUser[]>([])
+  const [convs, setConvs] = useState<AdminConversation[]>([])
   const [batches, setBatches] = useState<BatchSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [acting, setActing] = useState<string | null>(null)
@@ -29,8 +29,8 @@ export default function AdminPage() {
     try {
       const auth = await getAuth()
       if (!auth) { setErr('Not signed in.'); return }
-      const [u, b] = await Promise.all([adminUsers(auth), adminBatches(auth, 'pending')])
-      setUsers(u)
+      const [c, b] = await Promise.all([adminConversations(auth), adminBatches(auth, 'pending')])
+      setConvs(c)
       setBatches(b)
     } catch (e) {
       setErr(String(e))
@@ -43,22 +43,22 @@ export default function AdminPage() {
     if (isLoaded && isAdmin) void load()
   }, [isLoaded, isAdmin, load])
 
-  async function onReset(userId: string) {
-    setActing(userId)
+  async function onReset(cid: string) {
+    setActing(cid)
     try {
       const auth = await getAuth()
-      if (auth) await adminReset(auth, userId)
+      if (auth) await adminReset(auth, cid)
     } finally {
       setActing(null)
       void load()
     }
   }
 
-  async function onAbort(userId: string) {
-    setActing(userId)
+  async function onAbort(cid: string) {
+    setActing(cid)
     try {
       const auth = await getAuth()
-      if (auth) await adminAbort(auth, userId)
+      if (auth) await adminAbort(auth, cid)
     } finally {
       setActing(null)
       void load()
@@ -107,36 +107,38 @@ export default function AdminPage() {
           <div className="text-sm px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/30 text-foreground">{err}</div>
         )}
 
-        {/* Users */}
+        {/* Conversations */}
         <section>
-          <h2 className="font-serif text-xl font-bold text-foreground mb-4">Users</h2>
-          {loading && users.length === 0 ? (
+          <h2 className="font-serif text-xl font-bold text-foreground mb-4">Conversations</h2>
+          {loading && convs.length === 0 ? (
             <p className="text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>
-          ) : users.length === 0 ? (
-            <p className="text-muted-foreground">No users yet.</p>
+          ) : convs.length === 0 ? (
+            <p className="text-muted-foreground">No conversations yet.</p>
           ) : (
             <div className="overflow-x-auto border border-border rounded-lg">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-muted-foreground">
                     <th className="px-4 py-2 font-medium">User</th>
+                    <th className="px-4 py-2 font-medium">Title</th>
                     <th className="px-4 py-2 font-medium">Sandbox</th>
                     <th className="px-4 py-2 font-medium">Turn</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
-                    <tr key={u.user_id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-2 font-mono text-xs text-foreground">{u.user_id}</td>
+                  {convs.map((c) => (
+                    <tr key={c.id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2 font-mono text-xs text-foreground">{c.user_id ?? '—'}</td>
+                      <td className="px-4 py-2 text-foreground max-w-[16rem] truncate">{c.title || 'New chat'}</td>
                       <td className="px-4 py-2 text-muted-foreground">
-                        {u.sandbox_id ? <span className="font-mono text-xs">{u.sandbox_id.slice(0, 12)}</span> : '—'}
-                        <span className="ml-2 text-xs">({u.status})</span>
+                        {c.sandbox_id ? <span className="font-mono text-xs">{c.sandbox_id.slice(0, 12)}</span> : '—'}
+                        <span className="ml-2 text-xs">({c.status})</span>
                       </td>
                       <td className="px-4 py-2">
-                        {u.turn.busy ? (
+                        {c.turn.busy ? (
                           <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
-                            busy {u.turn.busy_age_s != null ? `· ${u.turn.busy_age_s}s` : ''}
+                            busy {c.turn.busy_age_s != null ? `· ${c.turn.busy_age_s}s` : ''}
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground">idle</span>
@@ -146,16 +148,16 @@ export default function AdminPage() {
                         <div className="flex gap-2 justify-end">
                           <Button
                             size="sm" variant="outline" className="gap-1"
-                            onClick={() => void onAbort(u.user_id)}
-                            disabled={acting === u.user_id || !u.turn.busy}
+                            onClick={() => void onAbort(c.id)}
+                            disabled={acting === c.id || !c.turn.busy}
                             title="Stop the running turn (frees the slot)"
                           >
                             <Square className="w-3.5 h-3.5" /> Abort
                           </Button>
                           <Button
                             size="sm" variant="outline" className="gap-1"
-                            onClick={() => void onReset(u.user_id)}
-                            disabled={acting === u.user_id}
+                            onClick={() => void onReset(c.id)}
+                            disabled={acting === c.id}
                             title="Clear slot + reprovision the sandbox"
                           >
                             <RotateCcw className="w-3.5 h-3.5" /> Reset

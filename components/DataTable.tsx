@@ -21,7 +21,15 @@ function linkHref(v: string): string | null {
 // Side panel: a fully editable grid over a sandbox file, a table lifted from the chat, or
 // a blank new table. Edit cells, add/delete rows & columns, Save back, or Export CSV.
 // Parent keys this by source so a new source remounts it (clean state, single load).
-export default function DataTable({ source, onClose }: { source: TableSource; onClose: () => void }) {
+export default function DataTable({
+  cid,
+  source,
+  onClose,
+}: {
+  cid: string
+  source: TableSource
+  onClose: () => void
+}) {
   const getAuth = useBackendAuth()
   const [grid, setGrid] = useState<Grid | null>(null)
   const [loading, setLoading] = useState(true)
@@ -55,7 +63,7 @@ export default function DataTable({ source, onClose }: { source: TableSource; on
         const auth = await getAuth()
         if (cancelled) return
         if (!auth) { setError('not signed in'); return }
-        const text = await fetchFileText(auth, source.path)
+        const text = await fetchFileText(cid, auth, source.path)
         if (cancelled) return
         if (text == null) { setError('could not read file'); return }
         setGrid(parseTabular(text, source.path))
@@ -127,7 +135,7 @@ export default function DataTable({ source, onClose }: { source: TableSource; on
     try {
       const auth = await getAuth()
       if (!auth) { setNote('not signed in'); return }
-      const ok = await writeFile(auth, savePath, serialize(grid, savePath))
+      const ok = await writeFile(cid, auth, savePath, serialize(grid, savePath))
       setNote(ok ? `Saved to ${savePath}` : 'Save failed')
     } finally {
       setSaving(false)

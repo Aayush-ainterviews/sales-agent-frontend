@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { Zap, Plus, BarChart3, Settings, LogOut } from 'lucide-react'
 import CampaignList from '@/components/CampaignList'
-import ChatPanel from '@/components/ChatPanel'
 
 export default function DashboardPage() {
   const [selectedCampaign, setSelectedCampaign] = useState<string | null>(null)
@@ -89,9 +88,6 @@ export default function DashboardPage() {
             </div>
           )}
         </main>
-
-        {/* AI Chat Sidebar */}
-        <ChatPanel />
       </div>
     </div>
   )

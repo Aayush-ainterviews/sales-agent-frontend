@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip } from 'lucide-react'
 import {
   streamAgent, abortTurn, steerTurn, listBatches, approveBatch, rejectBatch, fetchFileBlob, uploadFile,
+  fetchConversationMessages,
   type Auth, type BatchSummary,
 } from '@/lib/api'
 import { useBackendAuth } from '@/lib/useBackend'
@@ -48,11 +49,15 @@ const label = (name: string) => TOOL_LABEL[name] ?? name
 // Stop (abort), queue-while-working, Steer (inject into the running turn), and inline
 // email/batch approval cards.
 export default function ChatPanel({
+  cid,
   initialQuery,
   onShowTable,
+  onTurnComplete,
 }: {
+  cid: string
   initialQuery?: string
   onShowTable?: (source: TableSource) => void
+  onTurnComplete?: () => void
 }) {
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
@@ -91,6 +96,27 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery])
 
+  // Opening an existing conversation: load its saved message history (skip for a brand-new
+  // conversation that has an initialQuery to send). Component is keyed by cid in the parent,
+  // so this runs once per conversation.
+  useEffect(() => {
+    if (initialQuery) return
+    let cancelled = false
+    ;(async () => {
+      const auth = await getAuth()
+      if (!auth || cancelled) return
+      const hist = await fetchConversationMessages(cid, auth)
+      if (cancelled) return
+      setMessages(
+        hist.map((h, i) => ({ id: `h${i}`, role: h.role, content: h.content, tools: [], done: true })),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cid])
+
   const patchMsg = (id: string, fn: (x: Msg) => Msg) =>
     setMessages((m) => m.map((x) => (x.id === id ? fn(x) : x)))
 
@@ -119,6 +145,7 @@ export default function ChatPanel({
     abortRef.current = ctrl
 
     await streamAgent(
+      cid,
       t,
       auth,
       {
@@ -149,6 +176,7 @@ export default function ChatPanel({
 
     // pull any new draft batches this turn produced into the chat as approval cards
     await loadBatchesInline(auth)
+    onTurnComplete?.() // refresh the sidebar (title may have just been set from the 1st message)
 
     // flush a message the user queued while this turn was running
     const q = queuedRef.current
@@ -193,7 +221,7 @@ export default function ChatPanel({
     try {
       for (const f of Array.from(files)) {
         try {
-          const res = await uploadFile(auth, f)
+          const res = await uploadFile(cid, auth, f)
           setAttachments((a) => [...a, { path: res.path, name: res.name }])
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
@@ -229,7 +257,7 @@ export default function ChatPanel({
     setQueued(null)
     const auth = await getAuth()
     if (!auth) return
-    const ok = await steerTurn(auth, t)
+    const ok = await steerTurn(cid, auth, t)
     if (ok) {
       // shown as a steered user turn; the agent folds it into the SAME running turn
       setMessages((m) => [...m, { id: 'u' + Date.now(), role: 'user', content: t, tools: [], done: true, steered: true }])
@@ -245,13 +273,13 @@ export default function ChatPanel({
     setMessages((m) => m.map((x) => (x.role === 'assistant' && !x.done ? { ...x, done: true } : x)))
     setBusy(false)
     const auth = await getAuth()
-    if (auth) void abortTurn(auth)
+    if (auth) void abortTurn(cid, auth)
   }
 
   async function downloadFile(path: string) {
     const auth = await getAuth()
     if (!auth) return
-    const blob = await fetchFileBlob(auth, path)
+    const blob = await fetchFileBlob(cid, auth, path)
     if (!blob) return
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

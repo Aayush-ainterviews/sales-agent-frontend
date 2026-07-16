@@ -1,6 +1,6 @@
 // Browser-side client that talks to the backend DIRECTLY (direct-connect), passing a
-// short-lived Clerk JWT as the bearer. No same-origin proxy, so no 60s function cap —
-// long agent turns stream to completion. Get `auth` from useBackendAuth().
+// short-lived Clerk JWT as the bearer. Sandbox-scoped calls target a CONVERSATION
+// (/conversations/{cid}/...); user-scoped calls (batches, conversation list) use the userId.
 
 import { BACKEND_URL } from './backend'
 
@@ -12,6 +12,66 @@ export interface Auth {
 function authHeaders(token: string): HeadersInit {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
 }
+
+// --- conversations (multi-session) ---
+
+export interface Conversation {
+  id: string
+  title: string | null
+  status: string
+  updated_at: string | null
+}
+
+export async function listConversations(auth: Auth): Promise<Conversation[]> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/conversations`, {
+    headers: authHeaders(auth.token),
+    cache: 'no-store',
+  })
+  if (!r.ok) return []
+  return (await r.json()).conversations ?? []
+}
+
+export async function createConversation(auth: Auth): Promise<string | null> {
+  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/conversations`, {
+    method: 'POST',
+    headers: authHeaders(auth.token),
+  })
+  if (!r.ok) return null
+  return (await r.json()).id ?? null
+}
+
+export interface HistoryMsg {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export async function fetchConversationMessages(cid: string, auth: Auth): Promise<HistoryMsg[]> {
+  const r = await fetch(`${BACKEND_URL}/conversations/${cid}/messages`, {
+    headers: authHeaders(auth.token),
+    cache: 'no-store',
+  })
+  if (!r.ok) return []
+  return (await r.json()).messages ?? []
+}
+
+export async function renameConversation(cid: string, auth: Auth, title: string): Promise<boolean> {
+  const r = await fetch(`${BACKEND_URL}/conversations/${cid}`, {
+    method: 'PATCH',
+    headers: authHeaders(auth.token),
+    body: JSON.stringify({ title }),
+  })
+  return r.ok
+}
+
+export async function deleteConversation(cid: string, auth: Auth): Promise<boolean> {
+  const r = await fetch(`${BACKEND_URL}/conversations/${cid}`, {
+    method: 'DELETE',
+    headers: authHeaders(auth.token),
+  })
+  return r.ok
+}
+
+// --- turn streaming ---
 
 export interface AgentHandlers {
   onDelta?: (text: string) => void                      // streamed assistant text
@@ -36,8 +96,9 @@ function toolDetail(ev: any): string | undefined {
   return undefined
 }
 
-// Stream one turn. Parses the SSE frames the backend emits (pi events).
+// Stream one turn in a conversation. Parses the SSE frames the backend emits (pi events).
 export async function streamAgent(
+  cid: string,
   message: string,
   auth: Auth,
   h: AgentHandlers,
@@ -45,7 +106,7 @@ export async function streamAgent(
 ) {
   let res: Response
   try {
-    res = await fetch(`${BACKEND_URL}/users/${auth.userId}/messages`, {
+    res = await fetch(`${BACKEND_URL}/conversations/${cid}/messages`, {
       method: 'POST',
       headers: authHeaders(auth.token),
       body: JSON.stringify({ message }),
@@ -110,20 +171,17 @@ export async function streamAgent(
             h.onError?.(ev.detail ?? ev.reason ?? 'error')
             break
           case 'agent_end':
-            // fallback: if no streamed deltas arrived, render the final assistant text
             if (!sawText) {
               const text = finalText(ev)
               if (text) h.onDelta?.(text)
             }
             finished = true
             break
-          // turn_start, heartbeat, message_start/end, etc. -> ignore
         }
         if (finished) break
       }
     }
   } catch (e) {
-    // an intentional abort (Stop button) throws AbortError — not an error to surface
     if ((e as any)?.name !== 'AbortError') h.onError?.(String(e))
   } finally {
     h.onDone?.()
@@ -132,10 +190,9 @@ export async function streamAgent(
 
 // --- mid-turn controls (Q7) ---
 
-// Stop the running turn. Best-effort; the client also aborts its own fetch.
-export async function abortTurn(auth: Auth): Promise<boolean> {
+export async function abortTurn(cid: string, auth: Auth): Promise<boolean> {
   try {
-    const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/abort`, {
+    const r = await fetch(`${BACKEND_URL}/conversations/${cid}/abort`, {
       method: 'POST',
       headers: authHeaders(auth.token),
     })
@@ -145,11 +202,9 @@ export async function abortTurn(auth: Auth): Promise<boolean> {
   }
 }
 
-// Inject a message into the CURRENTLY running turn. Returns false (409) if no turn
-// is running — caller then falls back to sending it as a fresh turn.
-export async function steerTurn(auth: Auth, message: string): Promise<boolean> {
+export async function steerTurn(cid: string, auth: Auth, message: string): Promise<boolean> {
   try {
-    const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/steer`, {
+    const r = await fetch(`${BACKEND_URL}/conversations/${cid}/steer`, {
       method: 'POST',
       headers: authHeaders(auth.token),
       body: JSON.stringify({ message }),
@@ -160,7 +215,6 @@ export async function steerTurn(auth: Auth, message: string): Promise<boolean> {
   }
 }
 
-// Pull the last assistant message's text out of an agent_end event (fallback path).
 function finalText(agentEnd: any): string {
   const msgs = agentEnd?.messages
   if (!Array.isArray(msgs)) return ''
@@ -174,7 +228,7 @@ function finalText(agentEnd: any): string {
   return ''
 }
 
-// --- batch approval queue (own batches) ---
+// --- batch approval queue (per user, across conversations) ---
 
 export interface BatchSummary {
   id: string
@@ -182,6 +236,7 @@ export interface BatchSummary {
   leads: number
   status: string
   user_id?: string
+  conversation_id?: string | null
   result?: { sent?: number; failed?: number } | null
 }
 
@@ -210,7 +265,7 @@ export async function rejectBatch(auth: Auth, id: string) {
   return r.json()
 }
 
-// --- output file download (from the user's sandbox) ---
+// --- files (a conversation's sandbox) ---
 
 export interface Upload {
   path: string
@@ -218,16 +273,13 @@ export interface Upload {
   size: number
 }
 
-// Upload a file into the user's sandbox (stored under uploads/). Returns its sandbox
-// path so the caller can reference it in the next message. Throws with the HTTP status +
-// body on failure so the UI can surface the real reason instead of silently doing nothing.
-export async function uploadFile(auth: Auth, file: File): Promise<Upload> {
+export async function uploadFile(cid: string, auth: Auth, file: File): Promise<Upload> {
   const fd = new FormData()
   fd.append('file', file)
   // NOTE: don't set Content-Type — the browser adds the multipart boundary itself.
   let r: Response
   try {
-    r = await fetch(`${BACKEND_URL}/users/${auth.userId}/upload`, {
+    r = await fetch(`${BACKEND_URL}/conversations/${cid}/upload`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${auth.token}` },
       body: fd,
@@ -242,25 +294,21 @@ export async function uploadFile(auth: Auth, file: File): Promise<Upload> {
   return r.json()
 }
 
-// Fetch one output file (authenticated) as a Blob so the browser can save it.
-// Returns null if the file is missing/unreadable.
-export async function fetchFileBlob(auth: Auth, path: string): Promise<Blob | null> {
-  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/file?path=${encodeURIComponent(path)}`, {
+export async function fetchFileBlob(cid: string, auth: Auth, path: string): Promise<Blob | null> {
+  const r = await fetch(`${BACKEND_URL}/conversations/${cid}/file?path=${encodeURIComponent(path)}`, {
     headers: authHeaders(auth.token),
   })
   if (!r.ok) return null
   return r.blob()
 }
 
-// Read a file's text content (for the editable table).
-export async function fetchFileText(auth: Auth, path: string): Promise<string | null> {
-  const blob = await fetchFileBlob(auth, path)
+export async function fetchFileText(cid: string, auth: Auth, path: string): Promise<string | null> {
+  const blob = await fetchFileBlob(cid, auth, path)
   return blob ? blob.text() : null
 }
 
-// Save edited table content back to the sandbox file. Returns true on success.
-export async function writeFile(auth: Auth, path: string, content: string): Promise<boolean> {
-  const r = await fetch(`${BACKEND_URL}/users/${auth.userId}/file`, {
+export async function writeFile(cid: string, auth: Auth, path: string, content: string): Promise<boolean> {
+  const r = await fetch(`${BACKEND_URL}/conversations/${cid}/file`, {
     method: 'PUT',
     headers: authHeaders(auth.token),
     body: JSON.stringify({ path, content }),
@@ -268,21 +316,21 @@ export async function writeFile(auth: Auth, path: string, content: string): Prom
   return r.ok
 }
 
+// --- admin (role=admin): monitor all conversations + unstick ---
 
-// --- admin (role=admin): monitor all users + unstick ---
-
-export interface AdminUser {
-  user_id: string
+export interface AdminConversation {
+  id: string
+  user_id: string | null
+  title: string | null
   sandbox_id: string | null
   status: string
-  updated_at?: string | null
   turn: { busy: boolean; busy_age_s?: number; active_sandbox?: string | null }
 }
 
-export async function adminUsers(auth: Auth): Promise<AdminUser[]> {
-  const r = await fetch(`${BACKEND_URL}/admin/users`, { headers: authHeaders(auth.token), cache: 'no-store' })
+export async function adminConversations(auth: Auth): Promise<AdminConversation[]> {
+  const r = await fetch(`${BACKEND_URL}/admin/conversations`, { headers: authHeaders(auth.token), cache: 'no-store' })
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  return (await r.json()).users ?? []
+  return (await r.json()).conversations ?? []
 }
 
 export async function adminBatches(auth: Auth, status = 'pending'): Promise<BatchSummary[]> {
@@ -294,16 +342,16 @@ export async function adminBatches(auth: Auth, status = 'pending'): Promise<Batc
   return (await r.json()).batches ?? []
 }
 
-export async function adminReset(auth: Auth, userId: string) {
-  const r = await fetch(`${BACKEND_URL}/admin/users/${encodeURIComponent(userId)}/reset`, {
+export async function adminReset(auth: Auth, cid: string) {
+  const r = await fetch(`${BACKEND_URL}/admin/conversations/${encodeURIComponent(cid)}/reset`, {
     method: 'POST',
     headers: authHeaders(auth.token),
   })
   return r.json()
 }
 
-export async function adminAbort(auth: Auth, userId: string) {
-  const r = await fetch(`${BACKEND_URL}/admin/users/${encodeURIComponent(userId)}/abort`, {
+export async function adminAbort(auth: Auth, cid: string) {
+  const r = await fetch(`${BACKEND_URL}/admin/conversations/${encodeURIComponent(cid)}/abort`, {
     method: 'POST',
     headers: authHeaders(auth.token),
   })
