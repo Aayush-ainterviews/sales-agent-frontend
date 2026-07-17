@@ -78,7 +78,21 @@ export interface AgentHandlers {
   onTool?: (name: string, detail?: string) => void       // a tool started (detail = file path / command)
   onToolEnd?: (name: string, isError: boolean) => void
   onError?: (detail: string) => void
-  onDone?: () => void
+  onDone?: (clean: boolean) => void                      // clean=true only if agent_end was received
+}
+
+// Is a turn currently running for this conversation? (used to recover from a cut stream)
+export async function conversationStatus(cid: string, auth: Auth): Promise<boolean> {
+  try {
+    const r = await fetch(`${BACKEND_URL}/conversations/${cid}/status`, {
+      headers: authHeaders(auth.token),
+      cache: 'no-store',
+    })
+    if (!r.ok) return false
+    return !!(await r.json()).busy
+  } catch {
+    return false
+  }
 }
 
 // Pull the human-relevant argument out of a tool_execution_start event: the file path
@@ -114,17 +128,18 @@ export async function streamAgent(
     })
   } catch (e) {
     h.onError?.(String(e))
-    h.onDone?.()
+    h.onDone?.(false)
     return
   }
   if (res.status === 409) {
-    h.onError?.('a turn is already running')
-    h.onDone?.()
+    // a turn is already running for this conversation -> not an error; the caller recovers
+    // (polls status, then reloads the result) instead of showing a scary bubble.
+    h.onDone?.(false)
     return
   }
   if (!res.ok || !res.body) {
     h.onError?.(`HTTP ${res.status}`)
-    h.onDone?.()
+    h.onDone?.(false)
     return
   }
 
@@ -133,6 +148,7 @@ export async function streamAgent(
   let buf = ''
   let sawText = false
   let finished = false
+  let cleanEnd = false
 
   try {
     while (!finished) {
@@ -175,6 +191,7 @@ export async function streamAgent(
               const text = finalText(ev)
               if (text) h.onDelta?.(text)
             }
+            cleanEnd = true
             finished = true
             break
         }
@@ -184,7 +201,7 @@ export async function streamAgent(
   } catch (e) {
     if ((e as any)?.name !== 'AbortError') h.onError?.(String(e))
   } finally {
-    h.onDone?.()
+    h.onDone?.(cleanEnd)   // clean=false means the stream was cut before agent_end
   }
 }
 

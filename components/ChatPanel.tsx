@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Sparkles, Loader2, Check, AlertTriangle, Square, CornerDownRight, X, Mail, Paperclip } from 'lucide-react'
 import {
   streamAgent, abortTurn, steerTurn, listBatches, fetchFileBlob, uploadFile,
-  fetchConversationMessages,
+  fetchConversationMessages, conversationStatus,
   type Auth, type BatchSummary,
 } from '@/lib/api'
 import { useBackendAuth } from '@/lib/useBackend'
@@ -164,6 +164,7 @@ export default function ChatPanel({
         patch((x) => ({ ...x, content: x.content + rest }))
       }
     }
+    let cleanEnd = true // set by onDone; false => stream cut before agent_end
 
     await streamAgent(
       cid,
@@ -188,15 +189,25 @@ export default function ChatPanel({
           flush()
           patch((x) => ({ ...x, content: (x.content ? x.content + '\n\n' : '') + '⚠️ ' + detail }))
         },
-        onDone: () => {
-          flush() // reveal anything still buffered, then mark the turn done
-          patch((x) => ({ ...x, done: true }))
+        onDone: (clean) => {
+          flush() // reveal anything still buffered
+          cleanEnd = clean
+          if (clean) patch((x) => ({ ...x, done: true }))
+          // if not clean, leave it "working" — recovery below finalizes it
         },
       },
       ctrl.signal,
     )
 
     abortRef.current = null
+
+    // Stream ended WITHOUT agent_end (a long turn's SSE was cut, or the turn was already
+    // running) — the backend turn is likely still going. Stay busy, poll until it finishes,
+    // then load the result from history (so it appears without the user asking for it).
+    if (!cleanEnd && !abortedRef.current) {
+      await recoverTurn(botId)
+    }
+
     setBusy(false)
     onTurnComplete?.() // refresh the sidebar (title may have just been set from the 1st message)
 
@@ -247,6 +258,27 @@ export default function ChatPanel({
       if ((await loadBatchesInline()) > 0) return
       await new Promise((r) => setTimeout(r, 1500))
     }
+  }
+
+  // The live SSE stream ended before agent_end (cut, or the turn was already running). The
+  // backend turn is likely still going — poll its status (staying "busy" so sends queue),
+  // then load the finished turn's output from saved history so it shows without asking.
+  async function recoverTurn(botId: string) {
+    patchMsg(botId, (x) => ({ ...x, done: false })) // show "Working…" while we wait
+    for (let i = 0; i < 600; i++) {                  // up to ~20 min (matches the backend watchdog)
+      const auth = await getAuth()
+      if (!auth) break
+      if (!(await conversationStatus(cid, auth))) break // finished on the server
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+    const auth = await getAuth()
+    const hist = auth ? await fetchConversationMessages(cid, auth) : []
+    const lastAssistant = [...hist].reverse().find((h) => h.role === 'assistant')
+    patchMsg(botId, (x) => ({
+      ...x,
+      content: lastAssistant ? lastAssistant.content : x.content || '⚠️ lost the live stream.',
+      done: true,
+    }))
   }
 
   async function onPickFiles(files: FileList | null) {
