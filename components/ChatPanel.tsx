@@ -109,6 +109,16 @@ export default function ChatPanel({
       setMessages(
         hist.map((h, i) => ({ id: `h${i}`, role: h.role, content: h.content, tools: [], done: true })),
       )
+      // refreshed mid-turn? if a turn is still running for this chat, show "Working…" and
+      // recover — otherwise the running turn's result would never appear until a new message.
+      if (!cancelled && (await conversationStatus(cid, auth))) {
+        if (cancelled) return
+        setBusy(true)
+        const botId = 'a' + Date.now()
+        setMessages((m) => [...m, { id: botId, role: 'assistant', content: '', tools: [], done: false }])
+        await recoverTurn(botId)
+        if (!cancelled) setBusy(false)
+      }
     })()
     return () => {
       cancelled = true
@@ -192,7 +202,9 @@ export default function ChatPanel({
         onDone: (clean) => {
           flush() // reveal anything still buffered
           cleanEnd = clean
-          if (clean) patch((x) => ({ ...x, done: true }))
+          // mark every tool row done too — a missed tool_execution_end must not leave a
+          // spinner stuck forever once the turn has ended
+          if (clean) patch((x) => ({ ...x, done: true, tools: x.tools.map((t) => ({ ...t, done: true })) }))
           // if not clean, leave it "working" — recovery below finalizes it
         },
       },
@@ -264,7 +276,9 @@ export default function ChatPanel({
   // backend turn is likely still going — poll its status (staying "busy" so sends queue),
   // then load the finished turn's output from saved history so it shows without asking.
   async function recoverTurn(botId: string) {
-    patchMsg(botId, (x) => ({ ...x, done: false })) // show "Working…" while we wait
+    // the live event stream is gone, so we can't track tool starts/ends anymore — freeze the
+    // tool rows (mark them done so none spins forever) and show "Working…" while we wait.
+    patchMsg(botId, (x) => ({ ...x, done: false, tools: x.tools.map((t) => ({ ...t, done: true })) }))
     for (let i = 0; i < 600; i++) {                  // up to ~20 min (matches the backend watchdog)
       const auth = await getAuth()
       if (!auth) break
