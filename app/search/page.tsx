@@ -19,7 +19,7 @@ function SearchContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const query = searchParams.get('q') || ''
-  const { user } = useUser()
+  const { user, isLoaded } = useUser()
   const isAdmin = user?.publicMetadata?.role === 'admin'
   const getAuth = useBackendAuth()
 
@@ -118,9 +118,10 @@ function SearchContent() {
     return list
   }, [getAuth])
 
-  // bootstrap once: ?q= -> new chat that auto-sends; else open the most recent (or a new one)
+  // bootstrap once, but ONLY after Clerk is loaded — on a hard refresh the auth isn't ready
+  // on first mount, so getAuth() would return null and we'd bail to a blank screen forever.
   useEffect(() => {
-    if (bootstrapped.current) return
+    if (!isLoaded || bootstrapped.current) return
     bootstrapped.current = true
     ;(async () => {
       const auth = await getAuth()
@@ -147,7 +148,7 @@ function SearchContent() {
       setLoadingConvs(false)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isLoaded])
 
   async function onNew() {
     const auth = await getAuth()

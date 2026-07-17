@@ -2,6 +2,8 @@
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize from 'rehype-sanitize'
 import { Download, Table } from 'lucide-react'
 
 // Inline code that looks like a file (has a dir separator + an extension, no spaces,
@@ -26,6 +28,9 @@ export function Markdown({
     <div className="text-sm leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // render the agent's inline HTML (e.g. <br> inside table cells) but sanitize it —
+        // scraped data flows through here, so strip scripts/handlers while keeping <br>, <a>, etc.
+        rehypePlugins={[rehypeRaw, rehypeSanitize]}
         components={{
           h1: ({ node, ...p }) => <h1 className="font-serif text-lg font-bold mt-3 mb-1.5 first:mt-0" {...p} />,
           h2: ({ node, ...p }) => <h2 className="font-serif text-base font-bold mt-3 mb-1.5 first:mt-0" {...p} />,
